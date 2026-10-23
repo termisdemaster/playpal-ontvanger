@@ -12,7 +12,8 @@
 // Eigen Cast-ontvanger van Play-Pal. Speelt dezelfde doorlopende stroom als de standaardontvanger,
 // maar meldt "volgende" en "vorige" als ondersteund. Zegt iemand "Hey Google, volgende", dan gaat dat
 // niet naar de speler maar als bericht naar Play-Pal op de pc (namespace BEDIENING), met bron "spraak".
-// Elk binnenkomend bericht wordt ook als "gezien" doorgegeven, zodat de proef op Eettafel meet welk
+// Zo ook pauze, afspelen, spoelen, shuffle en herhalen: Play-Pal op de pc beslist, de speaker speelt alleen de
+// stroom. Elk ander binnenkomend bericht wordt als "gezien" doorgegeven, zodat de proef op Eettafel meet welk
 // berichttype de Assistent echt stuurt.
 // 23-10: op Eettafel kwam de eerste versie niet op (LAUNCH: USER_ALLOWED, daarna niets). Daarom start de
 // ontvanger nu als eerste, en staat elke aanvulling los in try/catch: een fout daarin mag het starten nooit
@@ -23,12 +24,17 @@ const fouten = [];
 function probeer(wat, stap) { try { stap(); } catch (e) { fouten.push(wat + ': ' + e); console.log(wat, e); } }
 function meld(data) { try { ctx.sendCustomMessage(BEDIENING, undefined, data); } catch (e) { console.log('meld mislukt', e); } }
 
+function ONDERSTEUND() {
+  const C = cast.framework.messages.Command;
+  return ['PAUSE', 'SEEK', 'QUEUE_NEXT', 'QUEUE_PREV', 'QUEUE_SHUFFLE', 'QUEUE_REPEAT_ALL', 'QUEUE_REPEAT_ONE']
+    .reduce((alles, naam) => alles | (C[naam] || 0), 0);
+}
 const opties = new cast.framework.CastReceiverOptions();
 opties.customNamespaces = { [BEDIENING]: cast.framework.system.MessageType.JSON };
 opties.disableIdleTimeout = true;
 probeer('opties', () => {
   const C = cast.framework.messages.Command;
-  opties.supportedCommands = C.PAUSE | C.QUEUE_NEXT | C.QUEUE_PREV;
+  opties.supportedCommands = ONDERSTEUND();
 });
 ctx.start(opties);
 
@@ -47,18 +53,36 @@ function naarPc(opdracht) {
 onderschep('LOAD', verzoek => {
   probeer('commando\'s', () => {
     const C = cast.framework.messages.Command;
-    speler.setSupportedMediaCommands(C.PAUSE | C.QUEUE_NEXT | C.QUEUE_PREV, true);
+    speler.setSupportedMediaCommands(ONDERSTEUND(), true);
   });
   return verzoek;
 });
+function naarPcMet(opdracht, extra) {
+  return verzoek => { meld(Object.assign({ type: 'opdracht', opdracht, bron: 'spraak' }, extra)); return null; };
+}
+const HERHALEN = { REPEAT_OFF: 'uit', REPEAT_ALL: 'lijst', REPEAT_SINGLE: 'nummer', REPEAT_ALL_AND_SHUFFLE: 'lijst' };
 onderschep('QUEUE_UPDATE', verzoek => {
-  const sprong = verzoek && verzoek.jump;
-  if (sprong > 0) return naarPc('volgende')(verzoek);
-  if (sprong < 0) return naarPc('vorige')(verzoek);
-  meld({ type: 'gezien', bericht: 'QUEUE_UPDATE', inhoud: JSON.stringify(verzoek).slice(0, 500) });
+  const v = verzoek || {};
+  if (v.jump > 0) return naarPc('volgende')(v);
+  if (v.jump < 0) return naarPc('vorige')(v);
+  if (typeof v.shuffle === 'boolean') return naarPcMet('shuffle', { aan: v.shuffle })(v);
+  if (HERHALEN[v.repeatMode]) {
+    if (v.repeatMode === 'REPEAT_ALL_AND_SHUFFLE') meld({ type: 'opdracht', opdracht: 'shuffle', bron: 'spraak', aan: true });
+    return naarPcMet('herhalen', { stand: HERHALEN[v.repeatMode] })(v);
+  }
+  meld({ type: 'gezien', bericht: 'QUEUE_UPDATE', inhoud: JSON.stringify(v).slice(0, 500) });
   return verzoek;
 });
-for (const soort of ['PAUSE', 'PLAY', 'STOP', 'SEEK', 'SKIP_AD', 'USER_ACTION', 'QUEUE_JUMP']) {
+onderschep('PAUSE', naarPc('pauze'));
+onderschep('PLAY', naarPc('afspelen'));
+onderschep('SEEK', verzoek => {
+  const v = verzoek || {};
+  if (typeof v.relativeTime === 'number') return naarPcMet('spoelen', { seconden: v.relativeTime })(v);
+  if (typeof v.currentTime === 'number') return naarPcMet('spoelen', { seconden: v.currentTime, absoluut: true })(v);
+  meld({ type: 'gezien', bericht: 'SEEK', inhoud: JSON.stringify(v).slice(0, 500) });
+  return null;
+});
+for (const soort of ['STOP', 'SKIP_AD', 'USER_ACTION', 'QUEUE_JUMP', 'QUEUE_REORDER']) {
   onderschep(soort, verzoek => {
     meld({ type: 'gezien', bericht: soort, inhoud: JSON.stringify(verzoek).slice(0, 500) });
     return verzoek;
