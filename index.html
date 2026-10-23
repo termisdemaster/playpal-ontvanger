@@ -36,6 +36,15 @@ probeer('opties', () => {
   const C = cast.framework.messages.Command;
   opties.supportedCommands = ONDERSTEUND();
 });
+// [cast-vertraging] 23-10: op Eettafel speelde de speaker bij elke start 0,1-1 s, ging dan 5,5-6 s bufferen, en liep
+// daarna de hele sessie zoveel achter (bovenop de 3 s voorsprong van Play-Pal): ~10 s van "volgende" tot horen.
+// Daarom: de bufferdrempels van CAF laag, en na zo'n stilstand terugspringen naar vlak achter het ontvangen eind.
+probeer('afspeelinstellingen', () => {
+  const pc = new cast.framework.PlaybackConfig();
+  pc.autoPauseDuration = 0.5;  // pas bufferen als er minder dan 0,5 s klaarstaat
+  pc.autoResumeDuration = 1;   // en weer spelen zodra er 1 s klaarstaat
+  opties.playbackConfig = pc;
+});
 ctx.start(opties);
 
 const speler = ctx.getPlayerManager();
@@ -88,6 +97,50 @@ for (const soort of ['STOP', 'SKIP_AD', 'USER_ACTION', 'QUEUE_JUMP', 'QUEUE_REOR
     return verzoek;
   });
 }
+// Meten en bijspringen ([cast-vertraging]). "voor" = ontvangen maar nog niet gespeeld: zo lang duurt het van een
+// nieuw nummer in de stroom tot het klinkt. Elke meting gaat als "gezien" naar playpal.log op de pc.
+const DOEL = 3;           // zoveel buffer na een sprong (de voorsprong van Play-Pal, die zonder stilstand speelde)
+const MARGE = 1.5;        // pas springen als we zoveel meer achter lopen dan DOEL
+const r = x => Math.round(x * 100) / 100;
+let el = null, wachtSinds = 0, sprongen = 0, laatsteSprong = 0, springenUit = false;
+function stand(e) {
+  const b = e.buffered, eind = b.length ? b.end(b.length - 1) : 0;
+  return { tijd: r(e.currentTime), eind: r(eind), voor: r(eind - e.currentTime), klaar: e.readyState, net: e.networkState };
+}
+function meldStand(reden, extra) {
+  if (el) meld(Object.assign({ type: 'gezien', bericht: 'stand', reden }, stand(el), extra || {}));
+}
+function bijspringen() {
+  if (!el || springenUit || sprongen >= 3 || Date.now() - laatsteSprong < 60000) return;
+  const s = stand(el);
+  if (s.klaar < 3 || s.voor <= DOEL + MARGE) return;
+  el.currentTime = s.eind - DOEL;
+  sprongen++; laatsteSprong = Date.now();
+  meldStand('gesprongen', { was: s.voor, sprong: sprongen });
+}
+function koppelElement() {
+  let e = null;
+  try { e = speler.getMediaElement && speler.getMediaElement(); } catch (x) { }
+  if (!e || e === el) return;
+  el = e;
+  el.addEventListener('waiting', () => {
+    wachtSinds = Date.now();
+    if (laatsteSprong && Date.now() - laatsteSprong < 15000) { springenUit = true; meldStand('wacht na sprong, bijspringen uit'); }
+    else meldStand('wacht');
+  });
+  el.addEventListener('playing', () => {
+    const duur = wachtSinds ? r((Date.now() - wachtSinds) / 1000) : 0;
+    meldStand('speelt', { wachtte: duur });
+    if (wachtSinds) setTimeout(bijspringen, 2000);
+    wachtSinds = 0;
+  });
+  el.addEventListener('stalled', () => meldStand('stokt'));
+  meldStand('gekoppeld');
+}
+probeer('meten', () => {
+  setInterval(() => probeer('meten', koppelElement), 1000);
+  setInterval(() => probeer('meten', () => meldStand('elke 30 s')), 30000);
+});
 probeer('luisteren', () => ctx.addCustomMessageListener(BEDIENING, e => {
   if (e.data && e.data.type === 'ping') meld({ type: 'pong', fouten });
 }));
