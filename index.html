@@ -58,8 +58,6 @@ onderschep('QUEUE_UPDATE', verzoek => {
   meld({ type: 'gezien', bericht: 'QUEUE_UPDATE', inhoud: JSON.stringify(verzoek).slice(0, 500) });
   return verzoek;
 });
-onderschep('QUEUE_NEXT', naarPc('volgende'));
-onderschep('QUEUE_PREV', naarPc('vorige'));
 for (const soort of ['PAUSE', 'PLAY', 'STOP', 'SEEK', 'SKIP_AD', 'USER_ACTION', 'QUEUE_JUMP']) {
   onderschep(soort, verzoek => {
     meld({ type: 'gezien', bericht: soort, inhoud: JSON.stringify(verzoek).slice(0, 500) });
