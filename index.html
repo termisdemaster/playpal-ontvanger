@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<title>Play-Pal</title>
+<script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<style>body{margin:0;background:#000;color:#fff;font:4vh sans-serif}</style>
+</head>
+<body>
+<cast-media-player></cast-media-player>
+<script>
+// Eigen Cast-ontvanger van Play-Pal. Speelt dezelfde doorlopende stroom als de standaardontvanger,
+// maar meldt "volgende" en "vorige" als ondersteund. Zegt iemand "Hey Google, volgende", dan gaat dat
+// niet naar de speler maar als bericht naar Play-Pal op de pc (namespace BEDIENING), met bron "spraak".
+// Elk binnenkomend bericht wordt ook als "gezien" doorgegeven, zodat de proef op Eettafel meet welk
+// berichttype de Assistent echt stuurt.
+const BEDIENING = 'urn:x-cast:nl.playpal.bediening';
+const ctx = cast.framework.CastReceiverContext.getInstance();
+const speler = ctx.getPlayerManager();
+const T = cast.framework.messages.MessageType;
+const C = cast.framework.messages.Command;
+
+function meld(data) {
+  try { ctx.sendCustomMessage(BEDIENING, undefined, data); } catch (e) { console.log('meld mislukt', e); }
+}
+
+const ONDERSTEUND = C.PAUSE | C.QUEUE_NEXT | C.QUEUE_PREV;
+
+speler.setMessageInterceptor(T.LOAD, verzoek => {
+  speler.setSupportedMediaCommands(ONDERSTEUND, true);
+  return verzoek;
+});
+
+function naarPc(opdracht) {
+  return verzoek => {
+    meld({ type: 'opdracht', opdracht, bron: 'spraak', bericht: verzoek && verzoek.type });
+    return null; // niet zelf uitvoeren: Play-Pal op de pc beslist
+  };
+}
+
+speler.setMessageInterceptor(T.QUEUE_UPDATE, verzoek => {
+  const sprong = verzoek && verzoek.jump;
+  if (sprong > 0) return naarPc('volgende')(verzoek);
+  if (sprong < 0) return naarPc('vorige')(verzoek);
+  meld({ type: 'gezien', bericht: 'QUEUE_UPDATE', inhoud: JSON.stringify(verzoek).slice(0, 500) });
+  return verzoek;
+});
+for (const [soort, opdracht] of [['QUEUE_NEXT', 'volgende'], ['QUEUE_PREV', 'vorige']]) {
+  if (T[soort]) speler.setMessageInterceptor(T[soort], naarPc(opdracht));
+}
+for (const soort of ['PAUSE', 'PLAY', 'STOP', 'SEEK', 'SKIP_AD', 'USER_ACTION', 'SET_VOLUME', 'QUEUE_JUMP']) {
+  if (!T[soort]) continue;
+  speler.setMessageInterceptor(T[soort], verzoek => {
+    meld({ type: 'gezien', bericht: soort, inhoud: JSON.stringify(verzoek).slice(0, 500) });
+    return verzoek;
+  });
+}
+
+ctx.addCustomMessageListener(BEDIENING, e => {
+  if (e.data && e.data.type === 'ping') meld({ type: 'pong' });
+});
+
+const opties = new cast.framework.CastReceiverOptions();
+opties.customNamespaces = { [BEDIENING]: cast.framework.system.MessageType.JSON };
+opties.supportedCommands = ONDERSTEUND;
+opties.disableIdleTimeout = true;
+ctx.start(opties);
+</script>
+</body>
+</html>
