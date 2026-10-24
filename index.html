@@ -118,9 +118,26 @@ function bijspringen() {
   sprongen++; laatsteSprong = Date.now();
   meldStand('gesprongen', { was: s.voor, sprong: sprongen });
 }
-function koppelElement() {
+// 24-10: op de speakers kwam nooit een "stand" binnen. Daarom zoekt de ontvanger het element ook zelf (in de pagina en
+// in de shadow-DOM van cast-media-player) en meldt hij bij elke verbinding een diagnose met zijn versie.
+const VERSIE = 'diag-2410';
+function zoekElement() {
   let e = null;
   try { e = speler.getMediaElement && speler.getMediaElement(); } catch (x) { }
+  if (e) return [e, 'getMediaElement'];
+  e = document.querySelector('audio, video');
+  if (e) return [e, 'document'];
+  const cmp = document.querySelector('cast-media-player');
+  e = cmp && cmp.shadowRoot && cmp.shadowRoot.querySelector('audio, video');
+  return e ? [e, 'shadowRoot'] : [null, 'geen'];
+}
+function diagnose(reden) {
+  const [e, waar] = zoekElement();
+  meld({ type: 'gezien', bericht: 'diagnose', reden, versie: VERSIE, waar, element: e ? e.tagName : null,
+    getMediaElement: typeof speler.getMediaElement, gekoppeld: !!el, fouten: fouten.slice(-5).join(' | ') });
+}
+function koppelElement() {
+  const [e] = zoekElement();
   if (!e || e === el) return;
   el = e;
   el.addEventListener('waiting', () => {
@@ -142,10 +159,12 @@ probeer('meten', () => {
   setInterval(() => probeer('meten', () => meldStand('elke 30 s')), 30000);
 });
 probeer('luisteren', () => ctx.addCustomMessageListener(BEDIENING, e => {
-  if (e.data && e.data.type === 'ping') meld({ type: 'pong', fouten });
+  if (e.data && e.data.type === 'ping') { meld({ type: 'pong', fouten }); diagnose('ping'); }
 }));
 probeer('aangesloten', () => ctx.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, () => {
   if (fouten.length) meld({ type: 'gezien', bericht: 'fouten', inhoud: fouten.join(' | ') });
+  diagnose('verbonden');
+  setTimeout(() => diagnose('na 10 s'), 10000);
 }));
 </script>
 </body>
