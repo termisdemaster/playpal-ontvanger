@@ -110,17 +110,29 @@ function stand(e) {
 function meldStand(reden, extra) {
   if (el) meld(Object.assign({ type: 'gezien', bericht: 'stand', reden }, stand(el), extra || {}));
 }
-function bijspringen() {
+function bijspringen(reden) {
   if (!el || springenUit || sprongen >= 3 || Date.now() - laatsteSprong < 60000) return;
   const s = stand(el);
   if (s.klaar < 3 || s.voor <= DOEL + MARGE) return;
   el.currentTime = s.eind - DOEL;
   sprongen++; laatsteSprong = Date.now();
-  meldStand('gesprongen', { was: s.voor, sprong: sprongen });
+  meldStand('gesprongen', { was: s.voor, sprong: sprongen, door: reden || 'stilstand' });
+}
+// [cast-vertraging] 24-10 21:12 op plopwezen: de speaker begon pas 6 s na het verbinden en bleef de hele sessie vast op
+// "voor" 8,5 s, zonder ooit te stilstaan; dan sprong hij nooit bij. Nu ook: speelt hij 10 s aan één stuk meer dan
+// DOEL + MARGE achter (niet tijdens een pauze), dan springt hij, met dezelfde grenzen als na een stilstand.
+const TE_VER_MS = 10000;
+let teVerSinds = 0;
+function kijkAchterstand() {
+  if (!el || el.paused) { teVerSinds = 0; return; }
+  const s = stand(el);
+  if (s.klaar < 3 || s.voor <= DOEL + MARGE) { teVerSinds = 0; return; }
+  if (!teVerSinds) { teVerSinds = Date.now(); return; }
+  if (Date.now() - teVerSinds >= TE_VER_MS) { teVerSinds = 0; bijspringen('te ver achter'); }
 }
 // 24-10: op de speakers kwam nooit een "stand" binnen. Daarom zoekt de ontvanger het element ook zelf (in de pagina en
 // in de shadow-DOM van cast-media-player) en meldt hij bij elke verbinding een diagnose met zijn versie.
-const VERSIE = 'speler-2710';
+const VERSIE = 'achterstand-2710';
 function zoekElement() {
   let e = null;
   try { e = speler.getMediaElement && speler.getMediaElement(); } catch (x) { }
@@ -155,7 +167,7 @@ function koppelElement() {
   meldStand('gekoppeld');
 }
 probeer('meten', () => {
-  setInterval(() => probeer('meten', koppelElement), 1000);
+  setInterval(() => probeer('meten', () => { koppelElement(); kijkAchterstand(); }), 1000);
   setInterval(() => probeer('meten', () => meldStand('elke 30 s')), 30000);
 });
 probeer('luisteren', () => ctx.addCustomMessageListener(BEDIENING, e => {
