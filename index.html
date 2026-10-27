@@ -120,7 +120,7 @@ function bijspringen() {
 }
 // 24-10: op de speakers kwam nooit een "stand" binnen. Daarom zoekt de ontvanger het element ook zelf (in de pagina en
 // in de shadow-DOM van cast-media-player) en meldt hij bij elke verbinding een diagnose met zijn versie.
-const VERSIE = 'diag-2410';
+const VERSIE = 'speler-2710';
 function zoekElement() {
   let e = null;
   try { e = speler.getMediaElement && speler.getMediaElement(); } catch (x) { }
@@ -160,6 +160,15 @@ probeer('meten', () => {
 });
 probeer('luisteren', () => ctx.addCustomMessageListener(BEDIENING, e => {
   if (e.data && e.data.type === 'ping') { meld({ type: 'pong', fouten }); diagnose('ping'); }
+  // [pauze-eigen-ontvanger] 27-10: pauze en verder van Play-Pal zelf komen hier, niet als media-PAUSE/PLAY. Die
+  // onderscheppers sturen alles terug als spraakopdracht, en VoerPauze wisselt dan weer naar spelen. Hier wordt niets
+  // teruggemeld als opdracht, alleen als "gezien".
+  if (e.data && e.data.type === 'speler') {
+    const opdracht = e.data.opdracht;
+    if (opdracht === 'pauze') probeer('speler pauze', () => speler.pause());
+    else if (opdracht === 'afspelen') probeer('speler afspelen', () => speler.play());
+    meld({ type: 'gezien', bericht: 'speler', inhoud: String(opdracht) });
+  }
 }));
 probeer('aangesloten', () => ctx.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, () => {
   if (fouten.length) meld({ type: 'gezien', bericht: 'fouten', inhoud: fouten.join(' | ') });
