@@ -53,8 +53,16 @@ function onderschep(soort, verwerk) {
   if (!T[soort]) return;
   probeer('onderschep ' + soort, () => speler.setMessageInterceptor(T[soort], verwerk));
 }
+// [pauze-echo-ontvanger] 03-11: speler.pause()/play() for a "speler" message from Play-Pal runs through these same
+// PAUSE/PLAY interceptors. Without this mark it went back to the pc as a voice command (and was not even executed here).
+let vanPc = null;
 function naarPc(opdracht) {
   return verzoek => {
+    if (vanPc && vanPc.opdracht === opdracht && Date.now() < vanPc.tot) {
+      vanPc = null;
+      meld({ type: 'gezien', bericht: 'speler uitgevoerd', inhoud: opdracht });
+      return verzoek; // our own command from Play-Pal: execute it here, report nothing back as a command
+    }
     meld({ type: 'opdracht', opdracht, bron: 'spraak', bericht: verzoek && verzoek.type });
     return null; // niet zelf uitvoeren: Play-Pal op de pc beslist
   };
@@ -174,9 +182,10 @@ probeer('luisteren', () => ctx.addCustomMessageListener(BEDIENING, e => {
   if (e.data && e.data.type === 'ping') { meld({ type: 'pong', fouten }); diagnose('ping'); }
   // [pauze-eigen-ontvanger] 27-10: pauze en verder van Play-Pal zelf komen hier, niet als media-PAUSE/PLAY. Die
   // onderscheppers sturen alles terug als spraakopdracht, en VoerPauze wisselt dan weer naar spelen. Hier wordt niets
-  // teruggemeld als opdracht, alleen als "gezien".
+  // teruggemeld als opdracht, alleen als "gezien"; vanPc laat de onderschepper ze herkennen ([pauze-echo-ontvanger]).
   if (e.data && e.data.type === 'speler') {
     const opdracht = e.data.opdracht;
+    if (opdracht === 'pauze' || opdracht === 'afspelen') vanPc = { opdracht, tot: Date.now() + 2000 };
     if (opdracht === 'pauze') probeer('speler pauze', () => speler.pause());
     else if (opdracht === 'afspelen') probeer('speler afspelen', () => speler.play());
     meld({ type: 'gezien', bericht: 'speler', inhoud: String(opdracht) });
